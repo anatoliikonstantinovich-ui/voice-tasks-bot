@@ -5,39 +5,30 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
-TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+TG_FILE = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}"
 
 
 def send_message(chat_id, text):
     requests.post(
         f"{TG_API}/sendMessage",
-        json={"chat_id": chat_id, "text": text},
-        timeout=30,
+        json={
+            "chat_id": chat_id,
+            "text": text
+        },
+        timeout=30
     )
 
 
-@app.get("/")
+@app.route("/", methods=["GET"])
 def home():
     return "Voice Tasks Bot is running", 200
 
 
-@app.get("/setup")
-def setup_webhook():
-    webhook_url = "https://voice-tasks-bot.onrender.com/webhook"
-
-    response = requests.post(
-        f"{TG_API}/setWebhook",
-        json={"url": webhook_url},
-        timeout=30,
-    )
-
-    return response.json()
-
-
-@app.post("/webhook")
+@app.route("/webhook", methods=["POST"])
 def webhook():
     update = request.get_json(silent=True) or {}
     message = update.get("message", {})
@@ -46,45 +37,75 @@ def webhook():
     if not chat_id:
         return "ok", 200
 
-    if "voice" in message:
-        file_id = message["voice"]["file_id"]
-    elif "audio" in message:
-        file_id = message["audio"]["file_id"]
-    elif "document" in message:
-        file_id = message["document"]["file_id"]
-    else:
+    audio = message.get("voice") or message.get("audio") or message.get("document")
+
+    if not audio:
         send_message(
             chat_id,
-            "Пришли мне голосовое сообщение или аудиофайл.",
+            "Пришли мне голосовое сообщение или аудиофайл."
         )
         return "ok", 200
 
+    file_id = audio.get("file_id")
+
     try:
-        info_response = requests.get(
+        file_info = requests.get(
             f"{TG_API}/getFile",
             params={"file_id": file_id},
-            timeout=30,
-        )
-        info_response.raise_for_status()
-        info = info_response.json()
+            timeout=30
+        ).json()
 
-        file_path = info["result"]["file_path"]
+        file_path = file_info["result"]["file_path"]
 
-        audio_response = requests.get(
-            f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}",
-            timeout=60,
-        )
-        audio_response.raise_for_status()
-        audio = audio_response.content
+        audio_data = requests.get(
+            f"{TG_FILE}/{file_path}",
+            timeout=60
+        ).content
 
         suffix = os.path.splitext(file_path)[1] or ".ogg"
 
-        with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
-            tmp.write(audio)
-            tmp.flush()
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix,
+            delete=False
+        ) as temp_file:
+            temp_file.write(audio_data)
+            temp_path = temp_file.name
 
-            with open(tmp.name, "rb") as audio_file:
-                response = requests.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={
-                        "Authorization":
+        with open(temp_path, "rb") as audio_file:
+            response = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}"
+                },
+                files={
+                    "file": (
+                        os.path.basename(temp_path),
+                        audio_file
+                    )
+                },
+                data={
+                    "model": "whisper-large-v3-turbo",
+                    "language": "ru",
+                    "response_format": "json"
+                },
+                timeout=120
+            )
+
+        os.remove(temp_path)
+
+        response.raise_for_status()
+        text = response.json().get("text", "").strip()
+
+        if text:
+            send_message(chat_id, text)
+        else:
+            send_message(chat_id, "Не удалось распознать запись.")
+
+    except Exception as error:
+        print(repr(error), flush=True)
+        send_message(
+            chat_id,
+            "Не удалось распознать аудио."
+        )
+
+    return "ok", 200
