@@ -93,3 +93,14 @@ def webhook():
         )
 
     return "ok", 200
+    @app.get("/setup")
+def setup_webhook():
+    webhook_url = "https://voice-tasks-bot.onrender.com/webhook"
+
+    response = requests.post(
+        f"{TG_API}/setWebhook",
+        json={"url": webhook_url},
+        timeout=30,
+    )
+
+    return response.json()
