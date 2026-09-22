@@ -24,6 +24,19 @@ def home():
     return "Voice Tasks Bot is running", 200
 
 
+@app.get("/setup")
+def setup_webhook():
+    webhook_url = "https://voice-tasks-bot.onrender.com/webhook"
+
+    response = requests.post(
+        f"{TG_API}/setWebhook",
+        json={"url": webhook_url},
+        timeout=30,
+    )
+
+    return response.json()
+
+
 @app.post("/webhook")
 def webhook():
     update = request.get_json(silent=True) or {}
@@ -42,22 +55,27 @@ def webhook():
     else:
         send_message(
             chat_id,
-            "Пришли мне голосовое сообщение или аудиофайл."
+            "Пришли мне голосовое сообщение или аудиофайл.",
         )
         return "ok", 200
 
     try:
-        info = requests.get(
+        info_response = requests.get(
             f"{TG_API}/getFile",
             params={"file_id": file_id},
             timeout=30,
-        ).json()
+        )
+        info_response.raise_for_status()
+        info = info_response.json()
 
         file_path = info["result"]["file_path"]
-        audio = requests.get(
+
+        audio_response = requests.get(
             f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}",
             timeout=60,
-        ).content
+        )
+        audio_response.raise_for_status()
+        audio = audio_response.content
 
         suffix = os.path.splitext(file_path)[1] or ".ogg"
 
@@ -65,42 +83,8 @@ def webhook():
             tmp.write(audio)
             tmp.flush()
 
-            with open(tmp.name, "rb") as f:
+            with open(tmp.name, "rb") as audio_file:
                 response = requests.post(
                     "https://api.groq.com/openai/v1/audio/transcriptions",
                     headers={
-                        "Authorization": f"Bearer {GROQ_API_KEY}"
-                    },
-                    files={"file": (os.path.basename(file_path), f)},
-                    data={
-                        "model": "whisper-large-v3-turbo",
-                        "language": "ru",
-                        "response_format": "json",
-                    },
-                    timeout=120,
-                )
-
-        response.raise_for_status()
-        text = response.json()["text"].strip()
-
-        send_message(chat_id, text or "Не удалось распознать речь.")
-
-    except Exception as e:
-        print(e, flush=True)
-        send_message(
-            chat_id,
-            "Не получилось распознать запись. Попробуй ещё раз."
-        )
-
-    return "ok", 200
-    @app.get("/setup")
-def setup_webhook():
-    webhook_url = "https://voice-tasks-bot.onrender.com/webhook"
-
-    response = requests.post(
-        f"{TG_API}/setWebhook",
-        json={"url": webhook_url},
-        timeout=30,
-    )
-
-    return response.json()
+                        "Authorization":
