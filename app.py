@@ -93,7 +93,7 @@ def webhook():
             )
 
         os.remove(temp_path)
-
+print("GROQ RESPONSE:", response.status_code, response.text, flush=True)
         response.raise_for_status()
         text = response.json().get("text", "").strip()
 
