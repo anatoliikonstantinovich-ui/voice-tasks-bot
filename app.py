@@ -79,8 +79,9 @@ def webhook():
                 },
                 files={
                     "file": (
-                        os.path.basename(temp_path),
-                        audio_file
+                        "audio.ogg",
+                        audio_file,
+                        "audio/ogg"
                     )
                 },
                 data={
